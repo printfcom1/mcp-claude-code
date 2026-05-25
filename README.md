@@ -1,31 +1,83 @@
-# Claude Code MCP Bridge for Codex
+# MCP Claude Code Bridge for Codex
 
-Reusable MCP bridge that lets Codex CLI and Codex Desktop delegate bounded worker tasks to Claude Code.
+A reusable Model Context Protocol (MCP) bridge that enables Codex CLI and Codex Desktop to delegate bounded worker tasks to Claude Code.
 
-Codex stays the orchestrator, reviewer, verifier, and final decision maker. Claude Code is only a bounded worker. This repo packages the bridge script, Codex config examples, install/check helpers, and troubleshooting notes in one place.
+This project packages a standalone MCP server, Codex configuration examples, installation helpers, verification scripts, and operating guidance for teams that want a repeatable Claude Code worker integration across local repositories.
 
-## What Is Included
+## Purpose
 
-- `scripts/claude-bridge-mcp.js` - MCP server exposing Claude Code worker tools.
-- `scripts/install-global.sh` - installs the bridge script into `~/.codex/tools/`.
-- `scripts/check-bridge.sh` - validates Node syntax and MCP `tools/list`.
-- `config/codex-global.example.toml` - global Codex config snippet for CLI and Desktop.
-- `config/codex-project.example.toml` - project-local config snippet for repos that keep `.codex/config.toml`.
-- `skills/claude-code-mcp-bridge.md` - reusable operating workflow for Codex.
-- `docs/troubleshooting.md` - layer-by-layer diagnostics, including Codex Desktop tool exposure mismatch.
+The bridge is designed for workflows where Codex remains the orchestrator and Claude Code acts as a scoped implementation worker.
 
-## Quick Start
+Codex is responsible for:
+
+- understanding the task and project context;
+- defining acceptance criteria and allowed write scope;
+- deciding what can safely be delegated;
+- reviewing all Claude Code output and diffs;
+- running independent verification before accepting changes.
+
+Claude Code is responsible only for the bounded task it is given.
+
+## Repository Contents
+
+| Path | Description |
+| --- | --- |
+| `scripts/claude-bridge-mcp.js` | MCP server that exposes Claude Code worker tools. |
+| `scripts/install-global.sh` | Installs the bridge into `~/.codex/tools/`. |
+| `scripts/check-bridge.sh` | Validates JavaScript syntax and MCP `tools/list`. |
+| `config/codex-global.example.toml` | Global Codex MCP config example for `~/.codex/config.toml`. |
+| `config/codex-project.example.toml` | Optional project-local Codex config example. |
+| `docs/operation.md` | Recommended delegation and review workflow. |
+| `docs/troubleshooting.md` | Layer-by-layer diagnostics for CLI, Desktop, bridge, and API issues. |
+| `skills/claude-code-mcp-bridge.md` | Reusable Codex skill guidance for operating the bridge. |
+
+## Requirements
+
+- Node.js available on `PATH`.
+- Claude Code CLI installed and available as `claude`.
+- Codex CLI or Codex Desktop with MCP server support.
+- Claude API/network access for real worker execution.
+
+The bridge and `claude --version` can succeed while real worker execution still fails if the process runs inside a network-restricted sandbox.
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone git@github.com:printfcom1/mcp-claude-code.git
+cd mcp-claude-code
+```
+
+Run the local bridge check:
 
 ```bash
 ./scripts/check-bridge.sh
+```
+
+Install the bridge globally for Codex:
+
+```bash
 ./scripts/install-global.sh
 ```
 
-Then add the snippet from `config/codex-global.example.toml` to `~/.codex/config.toml`.
+Add the MCP server entry to `~/.codex/config.toml`:
 
-Restart Codex CLI or start a new Codex Desktop session after changing MCP config. Codex Desktop may show the server in the CLI registry while the active model session still does not expose `mcp__claude_bridge__*` tools until a fresh session loads the tool set.
+```toml
+[mcp_servers.claude_bridge]
+command = "node"
+args = ["/Users/YOUR_USER/.codex/tools/claude-bridge-mcp.js"]
+cwd = "."
+startup_timeout_sec = 120
+```
 
-## Exposed Tools
+Replace `/Users/YOUR_USER` with your local home directory. The generated output from `scripts/install-global.sh` prints the exact path for your machine.
+
+After updating Codex configuration, restart Codex CLI or open a fresh Codex Desktop session.
+
+## Exposed MCP Tools
+
+The bridge exposes these tools:
 
 - `claude_health_check`
 - `claude_start_task`
@@ -34,29 +86,77 @@ Restart Codex CLI or start a new Codex Desktop session after changing MCP config
 - `claude_get_result`
 - `claude_stop_task`
 
-Worker runs write inspectable artifacts under:
+Worker artifacts are written to the current workspace:
 
 ```text
 .agent-runs/claude/<run_id>/
 ```
 
-## Health Model
+Each run directory contains status, event, result, and metadata files so Codex can inspect Claude Code output before accepting it.
 
-Diagnose in this order:
+## Health Checks
 
-1. Codex Desktop session exposure: the active model tool set includes `mcp__claude_bridge__*` tools.
-2. MCP bridge connectivity: manual JSON-RPC `initialize` and `tools/list` work.
-3. Claude CLI availability: `claude --version` works in the bridge environment.
-4. Claude API/network availability: a tiny Claude worker smoke test completes outside the Codex sandbox.
+Diagnose bridge issues in this order:
 
-`MCP bridge unavailable` is still a correct exception when layer 1 fails, even if layers 2 and 3 are healthy.
+1. **Codex Desktop session exposure**: the active model tool set includes `mcp__claude_bridge__*` tools.
+2. **MCP bridge connectivity**: JSON-RPC `initialize` and `tools/list` return the expected tools.
+3. **Claude CLI availability**: `claude --version` works in the bridge environment.
+4. **Claude API/network availability**: a tiny Claude worker smoke test completes in the environment that will run workers.
 
-## Remote Setup Later
+`MCP bridge unavailable` is a valid failure when the active Codex Desktop session does not expose the bridge tools, even if the CLI registry and manual MCP checks can see the server.
 
-When you have the remote URL:
+## Codex CLI and Codex Desktop Notes
 
-```bash
-git remote add origin <remote-url>
-git push -u origin main
+Codex CLI and Codex Desktop can both read MCP server configuration, but they may not expose tools to an already-running model session at the same time.
+
+If `codex mcp list --json` shows `claude_bridge` and manual `tools/list` works, but Codex Desktop does not show callable `mcp__claude_bridge__*` tools, treat it as a Desktop session/tool-exposure mismatch. Start a fresh Desktop session after changing MCP configuration.
+
+Do not diagnose that state as:
+
+- Claude Code CLI failure;
+- Claude API/network failure;
+- bridge script crash.
+
+## Worker Safety Model
+
+Use narrow prompts and explicit scope. Claude Code should not be delegated architecture, security-sensitive decisions, production risk changes, secrets, billing/auth decisions, or final review.
+
+Recommended worker prompt shape:
+
+```text
+You are a worker, not the architect. Follow the task exactly.
+Do not redesign. Do not make broad changes. Do not invent test results.
+
+Task:
+<bounded task>
+
+Allowed write scope:
+<files or directories>
+
+Non-goals:
+<explicit exclusions>
+
+Verification:
+<commands expected>
 ```
 
+Codex must review the diff and run verification before accepting any worker output.
+
+## Verification
+
+Run:
+
+```bash
+npm run check
+```
+
+This validates:
+
+- JavaScript syntax for the MCP bridge;
+- JSON-RPC initialization;
+- MCP `tools/list`;
+- presence of all expected Claude bridge tools.
+
+## License
+
+This repository is currently marked `UNLICENSED` in `package.json`. Add a license before public distribution if the repository is intended for external reuse.
