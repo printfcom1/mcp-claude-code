@@ -71,11 +71,14 @@ Add the MCP server entry to `~/.codex/config.toml`:
 [mcp_servers.claude_bridge]
 command = "node"
 args = ["/Users/YOUR_USER/.codex/tools/claude-bridge-mcp.js"]
-cwd = "."
+# Codex CLI can usually use cwd = ".". For Codex Desktop, prefer an absolute
+# workspace path if the registry sees the server but the session does not expose
+# mcp__claude_bridge__* tools.
+cwd = "/absolute/path/to/your/codex/workspace"
 startup_timeout_sec = 120
 ```
 
-Replace `/Users/YOUR_USER` with your local home directory. The generated output from `scripts/install-global.sh` prints the exact path for your machine.
+Replace `/Users/YOUR_USER` with your local home directory and set `cwd` to the workspace where Codex Desktop should launch the bridge. The generated output from `scripts/install-global.sh` prints the exact bridge path for your machine.
 
 After updating Codex configuration, restart Codex CLI or open a fresh Codex Desktop session.
 
@@ -130,6 +133,8 @@ Diagnose bridge issues in this order:
 Codex CLI and Codex Desktop can both read MCP server configuration, but they may not expose tools to an already-running model session at the same time.
 
 If `codex mcp list --json` shows `claude_bridge` and manual `tools/list` works, but Codex Desktop does not show callable `mcp__claude_bridge__*` tools, treat it as a Desktop session/tool-exposure mismatch. Start a fresh Desktop session after changing MCP configuration.
+
+If a fresh Desktop session still does not expose the tools, replace `cwd = "."` with an absolute workspace path in `~/.codex/config.toml`, restart Codex Desktop, and open another fresh session. This keeps the bridge launch context unambiguous for Desktop.
 
 Do not diagnose that state as:
 

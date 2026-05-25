@@ -19,6 +19,7 @@ If `codex mcp list --json` sees `claude_bridge`, and a manual JSON-RPC `tools/li
 Fix:
 
 - Open a fresh Codex Desktop session after editing `~/.codex/config.toml`.
+- If `cwd = "."` is configured and a fresh session still does not expose the tools, replace it with an absolute workspace path, then restart Codex Desktop and open another fresh session.
 - Confirm the Desktop session's available tools include `mcp__claude_bridge__*`.
 - Keep `MCP bridge unavailable` as the right exception when the active session cannot call the tools.
 

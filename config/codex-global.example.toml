@@ -4,6 +4,9 @@
 [mcp_servers.claude_bridge]
 command = "node"
 args = ["/Users/ipassion_1/.codex/tools/claude-bridge-mcp.js"]
-cwd = "."
+# Codex CLI can usually use cwd = ".".
+# If Codex Desktop lists claude_bridge in `codex mcp list --json` but does not
+# expose mcp__claude_bridge__* tools in a fresh session, use an absolute
+# workspace path here instead.
+cwd = "/absolute/path/to/your/codex/workspace"
 startup_timeout_sec = 120
-

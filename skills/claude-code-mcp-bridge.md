@@ -17,15 +17,15 @@ The global bridge is registered in `~/.codex/config.toml`:
 [mcp_servers.claude_bridge]
 command = "node"
 args = ["/Users/ipassion_1/.codex/tools/claude-bridge-mcp.js"]
-cwd = "."
+cwd = "/absolute/path/to/your/codex/workspace"
 startup_timeout_sec = 120
 ```
 
-The bridge script lives at `~/.codex/tools/claude-bridge-mcp.js`. With `cwd = "."`, each Codex workspace should run Claude from that workspace and write artifacts under `.agent-runs/claude/<run_id>/`.
+The bridge script lives at `~/.codex/tools/claude-bridge-mcp.js`. Codex CLI can usually use `cwd = "."`, but Codex Desktop may need an absolute workspace path before it exposes `mcp__claude_bridge__*` tools in fresh sessions. Worker artifacts are written under `.agent-runs/claude/<run_id>/` relative to the bridge working directory.
 
 The repository is the source of truth. Update and verify the repo first, then install the global bridge with `npm run install:global`; do not manually patch `~/.codex/tools/claude-bridge-mcp.js`.
 
-If tools are not visible in the current session, restart the Codex session after changing MCP config.
+If tools are not visible in the current session, restart the Codex session after changing MCP config. If `codex mcp list --json` and manual `tools/list` see the server but a fresh Desktop session still lacks `mcp__claude_bridge__*`, replace `cwd = "."` with an absolute workspace path.
 
 ## Role Rule
 

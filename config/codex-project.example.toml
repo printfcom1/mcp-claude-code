@@ -4,6 +4,8 @@
 [mcp_servers.claude_bridge]
 command = "node"
 args = ["/Users/ipassion_1/.codex/tools/claude-bridge-mcp.js"]
+# Project-local config may use "." because the project config already lives in
+# the intended workspace. Use an absolute workspace path if Codex Desktop sees
+# the registry entry but does not expose mcp__claude_bridge__* tools.
 cwd = "."
 startup_timeout_sec = 120
-
