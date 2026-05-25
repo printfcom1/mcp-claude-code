@@ -447,8 +447,15 @@ const tools = [
   },
 ];
 
+let transportMode = null;
+
 function send(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const body = JSON.stringify(message);
+  if (transportMode === "content-length") {
+    process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+  } else {
+    process.stdout.write(`${body}\n`);
+  }
 }
 
 function handle(message) {
@@ -478,12 +485,83 @@ function handle(message) {
   }
 }
 
-ensureDirs();
-readline.createInterface({ input: process.stdin }).on("line", (line) => {
-  if (!line.trim()) return;
-  try {
-    handle(JSON.parse(line));
-  } catch (error) {
-    send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: error.message } });
+function handleParseError(error) {
+  send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: error.message } });
+}
+
+function startLineDelimitedInput() {
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    if (!line.trim()) return;
+    transportMode = transportMode || "line";
+    try {
+      handle(JSON.parse(line));
+    } catch (error) {
+      handleParseError(error);
+    }
+  });
+}
+
+function startContentLengthInput(initialChunk) {
+  let buffer = Buffer.alloc(0);
+
+  function consume() {
+    while (buffer.length > 0) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+
+      const header = buffer.slice(0, headerEnd).toString("utf8");
+      const match = /(?:^|\r\n)Content-Length:\s*(\d+)/i.exec(header);
+      if (!match) {
+        handleParseError(new Error("missing Content-Length header"));
+        buffer = Buffer.alloc(0);
+        return;
+      }
+
+      const length = Number(match[1]);
+      const bodyStart = headerEnd + 4;
+      const bodyEnd = bodyStart + length;
+      if (buffer.length < bodyEnd) return;
+
+      const body = buffer.slice(bodyStart, bodyEnd).toString("utf8");
+      buffer = buffer.slice(bodyEnd);
+      try {
+        handle(JSON.parse(body));
+      } catch (error) {
+        handleParseError(error);
+      }
+    }
   }
-});
+
+  if (initialChunk && initialChunk.length) {
+    buffer = Buffer.concat([buffer, initialChunk]);
+    consume();
+  }
+
+  process.stdin.on("data", (chunk) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    consume();
+  });
+}
+
+function startInput() {
+  let started = false;
+  process.stdin.once("data", (chunk) => {
+    started = true;
+    const text = chunk.toString("utf8", 0, Math.min(chunk.length, 32));
+    if (text.startsWith("Content-Length:")) {
+      transportMode = "content-length";
+      startContentLengthInput(chunk);
+    } else {
+      transportMode = "line";
+      process.stdin.unshift(chunk);
+      startLineDelimitedInput();
+    }
+  });
+
+  process.stdin.once("end", () => {
+    if (!started) process.exit(0);
+  });
+}
+
+ensureDirs();
+startInput();
