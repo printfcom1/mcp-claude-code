@@ -1,0 +1,9 @@
+# Optional project-local .codex/config.toml snippet.
+# Prefer the global ~/.codex/config.toml entry unless a project needs a different bridge.
+
+[mcp_servers.claude_bridge]
+command = "node"
+args = ["/Users/ipassion_1/.codex/tools/claude-bridge-mcp.js"]
+cwd = "."
+startup_timeout_sec = 120
+

@@ -1,0 +1,9 @@
+# Add this to ~/.codex/config.toml for both Codex CLI and Codex Desktop.
+# Restart Codex CLI or open a fresh Codex Desktop session after editing config.
+
+[mcp_servers.claude_bridge]
+command = "node"
+args = ["/Users/ipassion_1/.codex/tools/claude-bridge-mcp.js"]
+cwd = "."
+startup_timeout_sec = 120
+
