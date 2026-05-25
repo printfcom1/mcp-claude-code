@@ -34,6 +34,8 @@ Expected:
 
 - `node --check scripts/claude-bridge-mcp.js` passes.
 - MCP `tools/list` includes `claude_health_check`, `claude_start_task`, `claude_get_status`, `claude_read_events`, `claude_get_result`, and `claude_stop_task`.
+- MCP schemas include `workspace_egress_consent`.
+- A default `claude_start_task` smoke test rejects with `workspace_api_egress_not_allowed` before spawning Claude.
 
 ## Layer 3: Claude CLI Availability
 
@@ -55,3 +57,16 @@ API Error: Unable to connect to API (ConnectionRefused)
 
 Run API smoke tests outside the Codex sandbox before treating this as a bridge or prompt failure.
 
+Before any API smoke can run, the workspace egress policy must allow it:
+
+```bash
+CLAUDE_BRIDGE_ALLOW_API_EGRESS=1
+```
+
+The tool call must also include:
+
+```json
+{ "workspace_egress_consent": true }
+```
+
+Without both, `claude_health_check` reports `blocked_by_workspace_egress_policy`, and `claude_start_task` rejects with `workspace_api_egress_not_allowed`.

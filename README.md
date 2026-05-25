@@ -40,6 +40,8 @@ Claude Code is responsible only for the bounded task it is given.
 
 The bridge and `claude --version` can succeed while real worker execution still fails if the process runs inside a network-restricted sandbox.
 
+By default, the bridge also blocks workspace API egress before spawning Claude Code. Real Claude API execution requires both `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` in the bridge environment and `workspace_egress_consent: true` on the tool call.
+
 ## Installation
 
 Clone the repository:
@@ -52,13 +54,13 @@ cd mcp-claude-code
 Run the local bridge check:
 
 ```bash
-./scripts/check-bridge.sh
+npm run check
 ```
 
 Install the bridge globally for Codex:
 
 ```bash
-./scripts/install-global.sh
+npm run install:global
 ```
 
 Add the MCP server entry to `~/.codex/config.toml`:
@@ -93,6 +95,8 @@ Worker artifacts are written to the current workspace:
 ```
 
 Each run directory contains status, event, result, and metadata files so Codex can inspect Claude Code output before accepting it.
+
+`claude_start_task` accepts `workspace_egress_consent`. If this is omitted, or if `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` is not set, the run is rejected with `workspace_api_egress_not_allowed` and Claude is not spawned.
 
 ## Health Checks
 
@@ -155,7 +159,9 @@ This validates:
 - JavaScript syntax for the MCP bridge;
 - JSON-RPC initialization;
 - MCP `tools/list`;
-- presence of all expected Claude bridge tools.
+- presence of all expected Claude bridge tools;
+- presence of the workspace egress consent schema;
+- default rejection before spawning Claude when workspace egress is not explicitly allowed.
 
 ## License
 

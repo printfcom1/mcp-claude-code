@@ -8,6 +8,8 @@ const { spawn, spawnSync } = require("child_process");
 
 const root = process.cwd();
 const runRoot = path.join(root, ".agent-runs", "claude");
+const serverVersion = "0.2.0";
+const apiEgressEnv = "CLAUDE_BRIDGE_ALLOW_API_EGRESS";
 const workerInstruction =
   "You are a worker, not the architect. Follow the task exactly. Do not redesign. Do not make broad changes. Do not invent test results. Return files inspected, files changed, commands run, outputs, diff summary, and unresolved issues.";
 
@@ -112,6 +114,22 @@ function looksDestructive(prompt) {
   return destructivePatterns.some((pattern) => pattern.test(prompt || ""));
 }
 
+function envAllowsApiEgress() {
+  return /^(1|true|yes)$/i.test(String(process.env[apiEgressEnv] || ""));
+}
+
+function apiEgressPolicy(workspaceEgressConsent = false) {
+  const env_opt_in = envAllowsApiEgress();
+  const task_consent = Boolean(workspaceEgressConsent);
+  return {
+    env_var: apiEgressEnv,
+    env_opt_in,
+    task_consent,
+    allowed: env_opt_in && task_consent,
+    reason: env_opt_in && task_consent ? "" : "workspace_api_egress_not_allowed",
+  };
+}
+
 function fullPrompt(prompt) {
   return `${workerInstruction}\n\nTask:\n${prompt}`;
 }
@@ -165,6 +183,7 @@ function toolText(value) {
 function startTask(args) {
   const prompt = String(args.prompt || args.task || "").trim();
   const allowDestructive = Boolean(args.allow_destructive);
+  const workspaceEgressConsent = Boolean(args.workspace_egress_consent);
   const permissionMode = String(args.permission_mode || "default").trim();
   const allowedPermissionModes = new Set(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]);
   if (!prompt) throw new Error("prompt is required");
@@ -184,6 +203,7 @@ function startTask(args) {
     created_at: startedAt,
     worker_instruction: workerInstruction,
     allow_destructive: allowDestructive,
+    workspace_egress_policy: apiEgressPolicy(workspaceEgressConsent),
     permission_mode: permissionMode,
     rejected: false,
     command: [
@@ -213,6 +233,27 @@ function startTask(args) {
   });
   fs.writeFileSync(eventsPath(runID), "");
   fs.writeFileSync(resultPath(runID), "# Claude Bridge Result\n\nResult is pending.\n");
+
+  const egress = apiEgressPolicy(workspaceEgressConsent);
+  if (!egress.allowed) {
+    writeJSON(metaPath(runID), {
+      ...meta,
+      workspace_egress_policy: egress,
+      rejected: true,
+      reject_reason: egress.reason,
+    });
+    appendEvent(runID, {
+      type: "rejected",
+      data: `Task rejected because workspace API egress is not allowed. Set ${apiEgressEnv}=1 and pass workspace_egress_consent=true only after explicit approval.`,
+    });
+    finalize(runID, {
+      state: "rejected",
+      ended_at: now(),
+      exit_code: 65,
+      error: egress.reason,
+    });
+    return toolText(pathsFor(runID, { state: "rejected" }));
+  }
 
   if (looksDestructive(prompt) && !allowDestructive) {
     writeJSON(metaPath(runID), {
@@ -313,6 +354,7 @@ function healthCheck(args) {
     bridge: {
       ok: true,
       server: "claude-bridge",
+      version: serverVersion,
       tools: tools.map((tool) => tool.name),
       desktop_session_exposure_hint:
         "If codex mcp list and manual tools/list see this server but the active Codex Desktop model tool set has no mcp__claude_bridge__* tools, diagnose MCP bridge unavailable as a Desktop session/tool-exposure mismatch.",
@@ -327,6 +369,7 @@ function healthCheck(args) {
       ok: false,
       checked: apiSmoke,
       requires_outside_sandbox: true,
+      workspace_egress_policy: apiEgressPolicy(Boolean(args && args.workspace_egress_consent)),
       command: "claude -p 'Return exactly: bridge api ok'",
       status: apiSmoke ? "checking" : "not_run",
       error: "",
@@ -342,6 +385,12 @@ function healthCheck(args) {
 
   if (!apiSmoke) {
     health.claude_api.status = "not_run_outside_sandbox_smoke_required";
+    return toolText(health);
+  }
+
+  if (!health.claude_api.workspace_egress_policy.allowed) {
+    health.claude_api.status = "blocked_by_workspace_egress_policy";
+    health.claude_api.error = "workspace_api_egress_not_allowed";
     return toolText(health);
   }
 
@@ -397,6 +446,7 @@ const tools = [
       type: "object",
       properties: {
         api_smoke: { type: "boolean", default: false },
+        workspace_egress_consent: { type: "boolean", default: false },
       },
     },
   },
@@ -408,6 +458,7 @@ const tools = [
       properties: {
         prompt: { type: "string" },
         allow_destructive: { type: "boolean", default: false },
+        workspace_egress_consent: { type: "boolean", default: false },
         permission_mode: {
           type: "string",
           enum: ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"],
@@ -468,7 +519,7 @@ function handle(message) {
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "claude-bridge", version: "0.1.0" },
+          serverInfo: { name: "claude-bridge", version: serverVersion },
         },
       });
     } else if (method === "notifications/initialized") {

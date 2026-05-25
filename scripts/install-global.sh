@@ -13,6 +13,14 @@ cat <<EOF
 Installed:
   ${target}
 
+Source of truth:
+  ${repo_root}
+
+Update workflow:
+  1. Update this repository.
+  2. Run: npm run check
+  3. Run: npm run install:global
+
 Add this to ~/.codex/config.toml:
 
 [mcp_servers.claude_bridge]
@@ -23,4 +31,3 @@ startup_timeout_sec = 120
 
 Restart Codex CLI or open a fresh Codex Desktop session after editing config.
 EOF
-

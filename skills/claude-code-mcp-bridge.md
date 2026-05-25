@@ -23,6 +23,8 @@ startup_timeout_sec = 120
 
 The bridge script lives at `~/.codex/tools/claude-bridge-mcp.js`. With `cwd = "."`, each Codex workspace should run Claude from that workspace and write artifacts under `.agent-runs/claude/<run_id>/`.
 
+The repository is the source of truth. Update and verify the repo first, then install the global bridge with `npm run install:global`; do not manually patch `~/.codex/tools/claude-bridge-mcp.js`.
+
 If tools are not visible in the current session, restart the Codex session after changing MCP config.
 
 ## Role Rule
@@ -44,11 +46,13 @@ Do not delegate architecture, security-sensitive decisions, destructive operatio
 
 1. Search/read enough local context for Codex to define the slice.
 2. Define objective, allowed write scope, non-goals, and verification.
-3. Start Claude through `claude_start_task`; do not call `claude -p` directly in normal workflows.
-4. Poll with `claude_get_status` and `claude_read_events`.
-5. Read `claude_get_result` and inspect `.agent-runs/claude/<run_id>/` artifacts.
-6. Review the diff yourself and run the repo's verification command.
-7. Accept, fix, or reject the output; record delegation details if the repo has a history workflow.
+3. Confirm workspace API egress is explicitly allowed before any real Claude API call.
+4. Start Claude through `claude_start_task`; do not call `claude -p` directly in normal workflows.
+5. Pass `workspace_egress_consent=true` only after explicit approval and only when `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` is set in the bridge environment.
+6. Poll with `claude_get_status` and `claude_read_events`.
+7. Read `claude_get_result` and inspect `.agent-runs/claude/<run_id>/` artifacts.
+8. Review the diff yourself and run the repo's verification command.
+9. Accept, fix, or reject the output; record delegation details if the repo has a history workflow.
 
 ## Health Checks
 
@@ -68,6 +72,8 @@ API Error: Unable to connect to API (ConnectionRefused)
 ```
 
 Do not claim API access works until a real API smoke test has passed.
+
+The bridge fails closed for workspace API egress. Without `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` and per-call `workspace_egress_consent=true`, API smoke checks are reported as `blocked_by_workspace_egress_policy`, and worker tasks are rejected with `workspace_api_egress_not_allowed` before spawning Claude.
 
 ## Worker Prompt Shape
 
