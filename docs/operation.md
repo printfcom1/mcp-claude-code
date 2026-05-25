@@ -29,6 +29,27 @@ and per-task consent:
 
 If either condition is missing, `claude_start_task` records run artifacts and rejects with `workspace_api_egress_not_allowed`.
 
+Prefer isolated context bundles over full workspace delegation. Prepare a local bundle first:
+
+```json
+{
+  "context_files": ["README.md", "scripts/claude-bridge-mcp.js"]
+}
+```
+
+Then delegate only after approval:
+
+```json
+{
+  "prompt": "Inspect the selected files and propose the smallest patch.",
+  "workspace_mode": "context_bundle",
+  "context_files": ["README.md", "scripts/claude-bridge-mcp.js"],
+  "workspace_egress_consent": true
+}
+```
+
+In `context_bundle` mode, Claude runs from `.agent-runs/claude/<run_id>/context/`, which contains only the explicitly selected files.
+
 ## Worker Prompt Shape
 
 ```text

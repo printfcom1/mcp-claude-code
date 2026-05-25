@@ -33,8 +33,9 @@ Run:
 Expected:
 
 - `node --check scripts/claude-bridge-mcp.js` passes.
-- MCP `tools/list` includes `claude_health_check`, `claude_start_task`, `claude_get_status`, `claude_read_events`, `claude_get_result`, and `claude_stop_task`.
-- MCP schemas include `workspace_egress_consent`.
+- MCP `tools/list` includes `claude_health_check`, `claude_start_task`, `claude_prepare_context_bundle`, `claude_get_status`, `claude_read_events`, `claude_get_result`, and `claude_stop_task`.
+- MCP schemas include `workspace_egress_consent` and `workspace_mode`.
+- A local `claude_prepare_context_bundle` smoke test prepares selected files without calling Claude.
 - A default `claude_start_task` smoke test rejects with `workspace_api_egress_not_allowed` before spawning Claude.
 
 ## Layer 3: Claude CLI Availability
@@ -70,3 +71,5 @@ The tool call must also include:
 ```
 
 Without both, `claude_health_check` reports `blocked_by_workspace_egress_policy`, and `claude_start_task` rejects with `workspace_api_egress_not_allowed`.
+
+If full workspace egress is not acceptable, use `workspace_mode: "context_bundle"` and pass explicit `context_files`. Claude then runs inside the generated context directory instead of the original workspace.

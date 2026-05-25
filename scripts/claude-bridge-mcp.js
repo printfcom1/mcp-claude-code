@@ -8,8 +8,9 @@ const { spawn, spawnSync } = require("child_process");
 
 const root = process.cwd();
 const runRoot = path.join(root, ".agent-runs", "claude");
-const serverVersion = "0.2.0";
+const serverVersion = "0.3.0";
 const apiEgressEnv = "CLAUDE_BRIDGE_ALLOW_API_EGRESS";
+const contextFileMaxBytes = 512 * 1024;
 const workerInstruction =
   "You are a worker, not the architect. Follow the task exactly. Do not redesign. Do not make broad changes. Do not invent test results. Return files inspected, files changed, commands run, outputs, diff summary, and unresolved issues.";
 
@@ -130,8 +131,76 @@ function apiEgressPolicy(workspaceEgressConsent = false) {
   };
 }
 
-function fullPrompt(prompt) {
-  return `${workerInstruction}\n\nTask:\n${prompt}`;
+function fullPrompt(prompt, workspaceMode = "current_workspace", contextFiles = []) {
+  const contextNote =
+    workspaceMode === "context_bundle"
+      ? [
+          "Workspace mode: context_bundle.",
+          "You are running inside an isolated context directory that contains only explicitly approved files.",
+          "Do not assume other workspace files are available. Return patch guidance or edits only for files present in this context bundle.",
+          `Approved context files: ${contextFiles.join(", ")}`,
+        ].join("\n")
+      : "Workspace mode: current_workspace.";
+  return `${workerInstruction}\n\n${contextNote}\n\nTask:\n${prompt}`;
+}
+
+function normalizeContextFiles(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("context_files must be an array of relative file paths");
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function prepareContextBundle(runID, contextFiles) {
+  if (contextFiles.length === 0) {
+    throw new Error("context_bundle mode requires at least one context file");
+  }
+
+  const contextRoot = fileFor(runID, "context");
+  const rootReal = fs.realpathSync(root);
+  const copied = [];
+  fs.mkdirSync(contextRoot, { recursive: true });
+
+  for (const rel of contextFiles) {
+    if (path.isAbsolute(rel)) throw new Error(`context file must be relative: ${rel}`);
+    if (rel.split(/[\\/]+/).includes("..")) throw new Error(`context file cannot contain '..': ${rel}`);
+    if (rel === ".agent-runs" || rel.startsWith(".agent-runs/")) {
+      throw new Error(`context file cannot come from .agent-runs: ${rel}`);
+    }
+
+    const source = path.resolve(root, rel);
+    const relativeFromRoot = path.relative(root, source);
+    if (relativeFromRoot.startsWith("..") || path.isAbsolute(relativeFromRoot)) {
+      throw new Error(`context file escapes workspace: ${rel}`);
+    }
+    if (!fs.existsSync(source)) throw new Error(`context file does not exist: ${rel}`);
+    const realSource = fs.realpathSync(source);
+    const realRelativeFromRoot = path.relative(rootReal, realSource);
+    if (realRelativeFromRoot.startsWith("..") || path.isAbsolute(realRelativeFromRoot)) {
+      throw new Error(`context file resolves outside workspace: ${rel}`);
+    }
+
+    const stat = fs.statSync(realSource);
+    if (!stat.isFile()) throw new Error(`context path is not a file: ${rel}`);
+    if (stat.size > contextFileMaxBytes) {
+      throw new Error(`context file exceeds ${contextFileMaxBytes} byte limit: ${rel}`);
+    }
+
+    const dest = path.join(contextRoot, relativeFromRoot);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(realSource, dest);
+    copied.push({
+      path: relativeFromRoot,
+      bytes: stat.size,
+    });
+  }
+
+  writeJSON(fileFor(runID, "context-manifest.json"), {
+    context_root: contextRoot,
+    source_root: root,
+    copied,
+  });
+
+  return { contextRoot, copied };
 }
 
 function renderResult(runID, status) {
@@ -184,9 +253,15 @@ function startTask(args) {
   const prompt = String(args.prompt || args.task || "").trim();
   const allowDestructive = Boolean(args.allow_destructive);
   const workspaceEgressConsent = Boolean(args.workspace_egress_consent);
+  const workspaceMode = String(args.workspace_mode || "current_workspace").trim();
+  const allowedWorkspaceModes = new Set(["current_workspace", "context_bundle"]);
+  const contextFiles = normalizeContextFiles(args.context_files);
   const permissionMode = String(args.permission_mode || "default").trim();
   const allowedPermissionModes = new Set(["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"]);
   if (!prompt) throw new Error("prompt is required");
+  if (!allowedWorkspaceModes.has(workspaceMode)) {
+    throw new Error(`unsupported workspace_mode: ${workspaceMode}`);
+  }
   if (!allowedPermissionModes.has(permissionMode)) {
     throw new Error(`unsupported permission_mode: ${permissionMode}`);
   }
@@ -204,6 +279,8 @@ function startTask(args) {
     worker_instruction: workerInstruction,
     allow_destructive: allowDestructive,
     workspace_egress_policy: apiEgressPolicy(workspaceEgressConsent),
+    workspace_mode: workspaceMode,
+    context_files: contextFiles,
     permission_mode: permissionMode,
     rejected: false,
     command: [
@@ -274,11 +351,21 @@ function startTask(args) {
     return toolText(pathsFor(runID, { state: "rejected" }));
   }
 
+  const context =
+    workspaceMode === "context_bundle"
+      ? prepareContextBundle(runID, contextFiles)
+      : { contextRoot: root, copied: [] };
+  writeJSON(metaPath(runID), {
+    ...readJSON(metaPath(runID)),
+    execution_cwd: context.contextRoot,
+    context_bundle: workspaceMode === "context_bundle" ? context : null,
+  });
+
   const child = spawn(
     "claude",
     [
       "-p",
-      fullPrompt(prompt),
+      fullPrompt(prompt, workspaceMode, contextFiles),
       "--output-format",
       "stream-json",
       "--verbose",
@@ -286,7 +373,7 @@ function startTask(args) {
       "--permission-mode",
       permissionMode,
     ],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: context.contextRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
 
   active.set(runID, child);
@@ -319,6 +406,49 @@ function startTask(args) {
   });
 
   return toolText(pathsFor(runID, { state: "running", pid: child.pid }));
+}
+
+function prepareContextBundleTask(args) {
+  const contextFiles = normalizeContextFiles(args.context_files);
+  ensureDirs();
+  const runID = newRunID();
+  const dir = dirFor(runID);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const startedAt = now();
+  writeJSON(statusPath(runID), {
+    run_id: runID,
+    state: "prepared",
+    pid: null,
+    started_at: startedAt,
+    last_activity_at: startedAt,
+    ended_at: startedAt,
+    exit_code: 0,
+    signal: null,
+    events_count: 0,
+    error: null,
+  });
+  fs.writeFileSync(eventsPath(runID), "");
+  fs.writeFileSync(resultPath(runID), "# Claude Context Bundle\n\nContext bundle prepared locally. No Claude API call was made.\n");
+
+  const context = prepareContextBundle(runID, contextFiles);
+  writeJSON(metaPath(runID), {
+    run_id: runID,
+    cwd: root,
+    created_at: startedAt,
+    workspace_mode: "context_bundle",
+    context_files: contextFiles,
+    execution_cwd: context.contextRoot,
+    context_bundle: context,
+    api_called: false,
+    rejected: false,
+  });
+  appendEvent(runID, {
+    type: "system",
+    data: `prepared context bundle with ${context.copied.length} file(s); no Claude API call was made`,
+  });
+  finalize(runID, { state: "prepared", ended_at: now(), exit_code: 0 });
+  return toolText(pathsFor(runID, { state: "prepared", context_path: context.contextRoot }));
 }
 
 function pathsFor(runID, extra = {}) {
@@ -418,6 +548,8 @@ function callTool(name, args) {
       return healthCheck(args || {});
     case "claude_start_task":
       return startTask(args || {});
+    case "claude_prepare_context_bundle":
+      return prepareContextBundleTask(args || {});
     case "claude_get_status": {
       const runID = requireRunID(args || {});
       return toolText(readStatus(runID));
@@ -459,6 +591,16 @@ const tools = [
         prompt: { type: "string" },
         allow_destructive: { type: "boolean", default: false },
         workspace_egress_consent: { type: "boolean", default: false },
+        workspace_mode: {
+          type: "string",
+          enum: ["current_workspace", "context_bundle"],
+          default: "current_workspace",
+        },
+        context_files: {
+          type: "array",
+          items: { type: "string" },
+          default: [],
+        },
         permission_mode: {
           type: "string",
           enum: ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"],
@@ -466,6 +608,22 @@ const tools = [
         },
       },
       required: ["prompt"],
+    },
+  },
+  {
+    name: "claude_prepare_context_bundle",
+    description:
+      "Prepare an isolated local context bundle from explicit relative files without calling the Claude API.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        context_files: {
+          type: "array",
+          items: { type: "string" },
+          default: [],
+        },
+      },
+      required: ["context_files"],
     },
   },
   {

@@ -20,6 +20,7 @@ echo "${response}"
 for tool in \
   claude_health_check \
   claude_start_task \
+  claude_prepare_context_bundle \
   claude_get_status \
   claude_read_events \
   claude_get_result \
@@ -33,6 +34,27 @@ done
 
 if ! grep -q '"workspace_egress_consent"' <<<"${response}"; then
   echo "missing workspace_egress_consent schema" >&2
+  exit 1
+fi
+
+if ! grep -q '"workspace_mode"' <<<"${response}"; then
+  echo "missing workspace_mode schema" >&2
+  exit 1
+fi
+
+printf 'approved context\n' >"${tmp_dir}/approved.txt"
+
+bundle_response="$(
+  cd "${tmp_dir}"
+  printf '%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"claude_prepare_context_bundle","arguments":{"context_files":["approved.txt"]}}}' \
+  | node "${bridge}"
+)"
+
+echo "${bundle_response}"
+
+if ! grep -q 'prepared' <<<"${bundle_response}"; then
+  echo "context bundle preparation did not complete" >&2
   exit 1
 fi
 

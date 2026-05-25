@@ -75,6 +75,8 @@ Do not claim API access works until a real API smoke test has passed.
 
 The bridge fails closed for workspace API egress. Without `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` and per-call `workspace_egress_consent=true`, API smoke checks are reported as `blocked_by_workspace_egress_policy`, and worker tasks are rejected with `workspace_api_egress_not_allowed` before spawning Claude.
 
+Prefer `workspace_mode="context_bundle"` for real delegation. Use `claude_prepare_context_bundle` to prepare explicit relative files locally first, then call `claude_start_task` with the same `context_files`, `workspace_mode="context_bundle"`, and explicit egress consent only after approval. Claude runs from the generated context directory, not the original workspace.
+
 ## Worker Prompt Shape
 
 Use narrow prompts:

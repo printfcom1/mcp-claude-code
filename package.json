@@ -1,6 +1,6 @@
 {
   "name": "claude-code-mcp-bridge-for-codex",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Reusable MCP bridge for Codex CLI/Desktop to delegate bounded worker tasks to Claude Code.",
   "type": "commonjs",

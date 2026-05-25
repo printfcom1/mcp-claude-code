@@ -42,6 +42,8 @@ The bridge and `claude --version` can succeed while real worker execution still 
 
 By default, the bridge also blocks workspace API egress before spawning Claude Code. Real Claude API execution requires both `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` in the bridge environment and `workspace_egress_consent: true` on the tool call.
 
+For safer delegation, use `workspace_mode: "context_bundle"` with explicit `context_files`. The bridge copies only those approved files into `.agent-runs/claude/<run_id>/context/` and runs Claude from that isolated directory instead of the full workspace.
+
 ## Installation
 
 Clone the repository:
@@ -83,6 +85,7 @@ The bridge exposes these tools:
 
 - `claude_health_check`
 - `claude_start_task`
+- `claude_prepare_context_bundle`
 - `claude_get_status`
 - `claude_read_events`
 - `claude_get_result`
@@ -96,7 +99,20 @@ Worker artifacts are written to the current workspace:
 
 Each run directory contains status, event, result, and metadata files so Codex can inspect Claude Code output before accepting it.
 
-`claude_start_task` accepts `workspace_egress_consent`. If this is omitted, or if `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` is not set, the run is rejected with `workspace_api_egress_not_allowed` and Claude is not spawned.
+`claude_prepare_context_bundle` prepares a local bundle from explicit relative files without calling the Claude API.
+
+`claude_start_task` accepts `workspace_egress_consent`, `workspace_mode`, and `context_files`. If consent is omitted, or if `CLAUDE_BRIDGE_ALLOW_API_EGRESS=1` is not set, the run is rejected with `workspace_api_egress_not_allowed` and Claude is not spawned.
+
+Example context-bundle delegation:
+
+```json
+{
+  "prompt": "Inspect the selected files and propose the smallest patch.",
+  "workspace_mode": "context_bundle",
+  "context_files": ["README.md", "scripts/claude-bridge-mcp.js"],
+  "workspace_egress_consent": true
+}
+```
 
 ## Health Checks
 
@@ -160,7 +176,8 @@ This validates:
 - JSON-RPC initialization;
 - MCP `tools/list`;
 - presence of all expected Claude bridge tools;
-- presence of the workspace egress consent schema;
+- presence of the workspace egress consent and context-bundle schemas;
+- local context bundle preparation without an API call;
 - default rejection before spawning Claude when workspace egress is not explicitly allowed.
 
 ## License
